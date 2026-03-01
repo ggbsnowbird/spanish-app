@@ -210,11 +210,14 @@ async function checkConnectivity() {
   });
 }
 
-// XHR-based fetch — works in Safari where fetch() blocks large cross-origin POSTs
+// XHR-based fetch — explicit stream:false to avoid chunked CORS issues
 function openAIFetch(endpoint, body, apiKey) {
+  // Always disable streaming — chunked responses cause status=0 CORS errors in Chrome
+  body = { ...body, stream: false };
+
   const bodyStr    = JSON.stringify(body);
   const bodySizeKB = Math.round(bodyStr.length / 1024);
-  log(`POST ${endpoint} (payload: ${bodySizeKB} KB) via XHR…`);
+  log(`POST ${endpoint} (payload: ${bodySizeKB} KB, stream: false) via XHR…`);
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -223,10 +226,16 @@ function openAIFetch(endpoint, body, apiKey) {
     xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
     xhr.timeout = OPENAI_TIMEOUT_MS;
 
+    xhr.onreadystatechange = () => {
+      log(`XHR readyState=${xhr.readyState} status=${xhr.status}`);
+    };
+
     xhr.onload = () => {
-      log(`Response: HTTP ${xhr.status}`);
+      log(`Response received: HTTP ${xhr.status}, body length: ${xhr.responseText.length} chars`);
       let data = {};
-      try { data = JSON.parse(xhr.responseText); } catch (_) {}
+      try { data = JSON.parse(xhr.responseText); } catch (e) {
+        log(`JSON parse error: ${e.message} — raw: ${xhr.responseText.substring(0, 100)}`, 'error');
+      }
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(data);
       } else {
@@ -236,8 +245,9 @@ function openAIFetch(endpoint, body, apiKey) {
     };
 
     xhr.onerror = () => {
-      log(`XHR network error (readyState=${xhr.readyState}, status=${xhr.status})`, 'error');
-      reject(new Error('Network error: could not reach api.openai.com. Check your internet connection or browser extensions.'));
+      log(`XHR onerror fired: readyState=${xhr.readyState}, status=${xhr.status}`, 'error');
+      log(`Response headers: ${xhr.getAllResponseHeaders() || '(none)'}`, 'warn');
+      reject(new Error(`Network error (status=${xhr.status}): browser blocked the response. This is a CORS issue — try opening the browser console Network tab for details.`));
     };
 
     xhr.ontimeout = () => {
@@ -245,16 +255,10 @@ function openAIFetch(endpoint, body, apiKey) {
       reject(new Error(`Request timed out after ${OPENAI_TIMEOUT_MS / 1000} seconds.`));
     };
 
-    xhr.onprogress = (e) => {
-      if (e.lengthComputable) {
-        log(`Receiving response… ${Math.round(e.loaded / 1024)} KB`);
-      }
-    };
-
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
         const pct = Math.round(e.loaded / e.total * 100);
-        if (pct % 25 === 0) log(`Uploading payload… ${pct}%`);
+        if (pct === 100) log(`Upload complete (${Math.round(e.total / 1024)} KB sent) — waiting for OpenAI response…`);
       }
     };
 
@@ -456,9 +460,9 @@ btnExtract.addEventListener('click', async () => {
 
   try {
     // Step 1 — resize
-    setStatus('Step 1/2 — Resizing image…', 'loading');
+    setStatus('Step 1/3 — Resizing image…', 'loading');
     log('Resizing image…');
-    const resized = await resizeImage(State.imageDataURL, 1024);
+    const resized = await resizeImage(State.imageDataURL, 512);
     State.imageDataURL = resized;
     imagePreview.src   = resized;  // show resized version
 
