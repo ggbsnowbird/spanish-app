@@ -210,7 +210,7 @@ function anthropicFetch(endpoint, body, apiKey) {
 async function validateApiKey(apiKey) {
   log('Validating Anthropic API key…');
   const data = await anthropicFetch('/v1/messages', {
-    model: 'claude-haiku-3-5',
+    model: 'claude-sonnet-4-6',
     max_tokens: 1,
     messages: [{ role: 'user', content: 'Hi' }],
   }, apiKey);
@@ -226,7 +226,7 @@ async function extractVocabFromImage(imageDataURL, apiKey) {
   log(`Sending image to Claude Vision (${sizeKB} KB)…`);
 
   const data = await anthropicFetch('/v1/messages', {
-    model: 'claude-haiku-3-5',
+    model: 'claude-sonnet-4-6',
     max_tokens: 1500,
     messages: [{
       role: 'user',
