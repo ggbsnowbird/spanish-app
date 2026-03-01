@@ -158,20 +158,44 @@ const OPENAI_TIMEOUT_MS = 30000;  // 30 s
 
 async function checkConnectivity() {
   log('Testing connectivity to api.openai.com…');
+
+  // Step 1: GET test
   try {
-    // A HEAD request to the models endpoint — no auth needed, just checks reachability
     const res = await fetch('https://api.openai.com/v1/models', {
       method: 'GET',
       signal: AbortSignal.timeout(8000),
     });
-    // 401 = reached the server (unauthorized is fine, it means network is open)
-    log(`Connectivity check: HTTP ${res.status} ${res.status === 401 ? '(reachable ✓)' : ''}`, res.status < 500 ? 'success' : 'warn');
-    return true;
+    log(`GET check: HTTP ${res.status} ${res.status === 401 ? '(reachable ✓)' : ''}`, 'success');
   } catch (err) {
-    log(`Connectivity check FAILED: ${err.name} — ${err.message}`, 'error');
-    log('Possible causes: VPN, firewall, browser extension, or network blocking api.openai.com', 'warn');
+    log(`GET check FAILED: ${err.name} — ${err.message}`, 'error');
+    log('Network is blocking all requests to api.openai.com', 'warn');
     return false;
   }
+
+  // Step 2: POST test with tiny body (no image)
+  log('Testing POST to api.openai.com with tiny body…');
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', 'https://api.openai.com/v1/chat/completions', true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('Authorization', `Bearer INVALID_KEY_TEST`);
+    xhr.timeout = 10000;
+    xhr.onload = () => {
+      // 401 = server received the POST, auth failed — that's fine, POST works
+      log(`POST check: HTTP ${xhr.status} ${xhr.status === 401 ? '(POST reachable ✓)' : ''}`, 'success');
+      resolve(true);
+    };
+    xhr.onerror = () => {
+      log(`POST check FAILED — browser is blocking POST requests to api.openai.com`, 'error');
+      log('This is likely a Safari privacy setting or browser extension. Try: Safari > Settings > Privacy > uncheck "Prevent cross-site tracking", or try Chrome/Firefox.', 'warn');
+      resolve(false);
+    };
+    xhr.ontimeout = () => {
+      log('POST check timed out', 'warn');
+      resolve(false);
+    };
+    xhr.send(JSON.stringify({ model: 'gpt-4o-mini', max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] }));
+  });
 }
 
 // XHR-based fetch — works in Safari where fetch() blocks large cross-origin POSTs
