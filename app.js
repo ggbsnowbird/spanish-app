@@ -242,11 +242,12 @@ async function extractVocabFromImage(imageDataURL, apiKey) {
         },
         {
           type: 'text',
-          text: `This image is a French–Spanish vocabulary lesson.
-Extract every French–Spanish word pair you can see.
+          text: `This image is a vocabulary lesson. Each line contains a Spanish word or phrase and its French translation (or vice versa).
+Your job: identify every pair and return them so that "french" contains the French word/phrase and "spanish" contains the Spanish word/phrase.
+Spanish words often contain accents like á, é, í, ó, ú, ñ. French words often contain accents like à, è, ê, ç, œ.
 Return ONLY a valid JSON array, no markdown, no explanation.
 Format: [{"french": "...", "spanish": "..."}, ...]
-If the same French word has multiple Spanish translations, create one entry per translation.
+If the same word has multiple translations, create one entry per translation.
 If you cannot find any pairs, return an empty array [].`,
         },
       ],
@@ -259,6 +260,22 @@ If you cannot find any pairs, return an empty array [].`,
   const pairs   = JSON.parse(cleaned);
   if (!Array.isArray(pairs)) throw new Error('Unexpected response format from Claude.');
   const filtered = pairs.filter(p => p.french && p.spanish);
+
+  // Sanity check: detect if Claude swapped the languages.
+  // Spanish words are more likely to contain ñ, ll, rr, or end in typical Spanish patterns.
+  // French words are more likely to contain eau, ou, oi, or end in -tion, -eur, -ais.
+  // Simple heuristic: if >50% of "french" values contain ñ or Spanish markers,
+  // and >50% of "spanish" values contain French markers → swap all pairs.
+  const spanishMarkers = /[ñ]|ción|ción|llo|rro/i;
+  const frenchMarkers  = /eau|oi|ais|eur|eux|ment|être|avoir/i;
+  const frenchFieldLooksSpanish = filtered.filter(p => spanishMarkers.test(p.french)).length;
+  const spanishFieldLooksFrench = filtered.filter(p => frenchMarkers.test(p.spanish)).length;
+
+  if (frenchFieldLooksSpanish > filtered.length * 0.4 || spanishFieldLooksFrench > filtered.length * 0.4) {
+    log('Languages appear swapped — correcting automatically', 'warn');
+    filtered.forEach(p => { [p.french, p.spanish] = [p.spanish, p.french]; });
+  }
+
   log(`Extracted ${filtered.length} word pairs ✓`, 'success');
   return filtered;
 }
