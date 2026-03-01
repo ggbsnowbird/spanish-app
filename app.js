@@ -174,45 +174,56 @@ async function checkConnectivity() {
   }
 }
 
-async function openAIFetch(endpoint, body, apiKey) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-    log(`Request aborted after ${OPENAI_TIMEOUT_MS / 1000}s timeout`, 'error');
-  }, OPENAI_TIMEOUT_MS);
-
-  const bodyStr  = JSON.stringify(body);
+// XHR-based fetch — works in Safari where fetch() blocks large cross-origin POSTs
+function openAIFetch(endpoint, body, apiKey) {
+  const bodyStr    = JSON.stringify(body);
   const bodySizeKB = Math.round(bodyStr.length / 1024);
-  log(`POST ${endpoint} (payload: ${bodySizeKB} KB) …`);
+  log(`POST ${endpoint} (payload: ${bodySizeKB} KB) via XHR…`);
 
-  try {
-    const res = await fetch(`https://api.openai.com/v1${endpoint}`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: bodyStr,
-    });
-    clearTimeout(timer);
-    log(`Response: HTTP ${res.status}`);
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `https://api.openai.com/v1${endpoint}`, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
+    xhr.timeout = OPENAI_TIMEOUT_MS;
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const msg = data?.error?.message ?? `HTTP ${res.status}`;
-      throw new Error(msg);
-    }
-    return data;
-  } catch (err) {
-    clearTimeout(timer);
-    if (err.name === 'AbortError') throw new Error('Request timed out after 30 seconds.');
-    // Enrich "Failed to fetch" with more detail
-    if (err.message === 'Failed to fetch' || err.message === 'Load failed') {
-      throw new Error(`Network error (${err.name}): could not reach api.openai.com. Check your internet connection, VPN, or browser extensions blocking the request.`);
-    }
-    throw err;
-  }
+    xhr.onload = () => {
+      log(`Response: HTTP ${xhr.status}`);
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch (_) {}
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data);
+      } else {
+        const msg = data?.error?.message ?? `HTTP ${xhr.status}`;
+        reject(new Error(msg));
+      }
+    };
+
+    xhr.onerror = () => {
+      log(`XHR network error (readyState=${xhr.readyState}, status=${xhr.status})`, 'error');
+      reject(new Error('Network error: could not reach api.openai.com. Check your internet connection or browser extensions.'));
+    };
+
+    xhr.ontimeout = () => {
+      log(`XHR timed out after ${OPENAI_TIMEOUT_MS / 1000}s`, 'error');
+      reject(new Error(`Request timed out after ${OPENAI_TIMEOUT_MS / 1000} seconds.`));
+    };
+
+    xhr.onprogress = (e) => {
+      if (e.lengthComputable) {
+        log(`Receiving response… ${Math.round(e.loaded / 1024)} KB`);
+      }
+    };
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round(e.loaded / e.total * 100);
+        if (pct % 25 === 0) log(`Uploading payload… ${pct}%`);
+      }
+    };
+
+    xhr.send(bodyStr);
+  });
 }
 
 // Validate API key with a tiny cheap call
