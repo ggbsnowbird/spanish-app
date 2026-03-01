@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spanish Vocabulary Trainer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ===== HEADER ===== -->
+  <header>
+    <h1>Spanish Vocabulary Trainer</h1>
+    <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
+  </header>
+
+  <!-- ===== VIEW: SETTINGS ===== -->
+  <section id="view-settings" class="view hidden">
+    <div class="card">
+      <h2>Settings</h2>
+      <label for="api-key-input">OpenAI API Key</label>
+      <input type="password" id="api-key-input" placeholder="sk-..." autocomplete="off" />
+      <p class="hint">Your key is stored only in your browser (localStorage) and never sent anywhere except directly to OpenAI.</p>
+      <button id="btn-save-settings" class="btn-primary">Save</button>
+      <button id="btn-close-settings" class="btn-secondary">Cancel</button>
+    </div>
+  </section>
+
+  <!-- ===== VIEW: UPLOAD ===== -->
+  <section id="view-upload" class="view">
+    <div class="card upload-card">
+      <h2>Upload your lesson image</h2>
+      <p class="hint">Upload a photo or scan of your Spanish lesson vocabulary list. OpenAI Vision will extract the French/Spanish word pairs automatically.</p>
+      <div id="drop-zone">
+        <input type="file" id="file-input" accept="image/*" hidden />
+        <label for="file-input" id="drop-label">
+          <span class="drop-icon">&#128247;</span>
+          <span>Click to choose an image<br/><small>or drag &amp; drop here</small></span>
+        </label>
+        <img id="image-preview" class="hidden" alt="Lesson preview" />
+      </div>
+      <div id="extract-status" class="status-msg hidden"></div>
+      <button id="btn-extract" class="btn-primary hidden">Extract vocabulary</button>
+    </div>
+  </section>
+
+  <!-- ===== VIEW: REVIEW ===== -->
+  <section id="view-review" class="view hidden">
+    <div class="layout-split">
+      <div class="sidebar">
+        <img id="review-image" alt="Lesson image" />
+      </div>
+      <div class="main-panel">
+        <div class="card">
+          <h2>Review extracted vocabulary</h2>
+          <p class="hint">Check the word pairs below. Click any cell to edit it. You can also add or remove rows.</p>
+          <table id="vocab-table">
+            <thead>
+              <tr><th>French</th><th>Spanish</th><th></th></tr>
+            </thead>
+            <tbody id="vocab-tbody"></tbody>
+          </table>
+          <div class="review-actions">
+            <button id="btn-add-row" class="btn-secondary">+ Add row</button>
+            <button id="btn-start-quiz" class="btn-primary">Start quiz</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== VIEW: QUIZ ===== -->
+  <section id="view-quiz" class="view hidden">
+    <div class="layout-split">
+      <div class="sidebar">
+        <img id="quiz-image" alt="Lesson image" />
+      </div>
+      <div class="main-panel">
+        <!-- Progress bar -->
+        <div class="progress-bar-wrap">
+          <div id="progress-bar" class="progress-bar"></div>
+        </div>
+        <p id="progress-label" class="progress-label"></p>
+
+        <!-- Quiz card -->
+        <div class="card quiz-card" id="quiz-card">
+          <p class="quiz-prompt">Translate into Spanish:</p>
+          <p id="quiz-word" class="quiz-word"></p>
+          <form id="quiz-form">
+            <input type="text" id="quiz-input" placeholder="Type the Spanish word..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+            <button type="submit" class="btn-primary">Check</button>
+          </form>
+          <div id="quiz-feedback" class="quiz-feedback hidden"></div>
+          <button id="btn-next" class="btn-secondary hidden">Next &rarr;</button>
+        </div>
+
+        <!-- Stats bar -->
+        <div class="stats-bar">
+          <span id="stat-correct" class="stat correct">Correct: 0</span>
+          <span id="stat-partial" class="stat partial">Close: 0</span>
+          <span id="stat-wrong" class="stat wrong">Wrong: 0</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== VIEW: RESULTS ===== -->
+  <section id="view-results" class="view hidden">
+    <div class="card results-card">
+      <h2>Session complete!</h2>
+      <div id="results-summary" class="results-summary"></div>
+      <table id="results-table">
+        <thead>
+          <tr><th>French</th><th>Spanish</th><th>Result</th><th>Next review</th></tr>
+        </thead>
+        <tbody id="results-tbody"></tbody>
+      </table>
+      <div class="review-actions">
+        <button id="btn-new-session" class="btn-secondary">New image</button>
+        <button id="btn-review-again" class="btn-primary">Review again</button>
+      </div>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
