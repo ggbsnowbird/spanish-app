@@ -134,15 +134,39 @@
     <div class="card results-card">
       <h2>Session complete!</h2>
       <div id="results-summary" class="results-summary"></div>
-      <table id="results-table">
-        <thead>
-          <tr><th>French</th><th>Spanish</th><th>Result</th><th>Next review</th></tr>
-        </thead>
-        <tbody id="results-tbody"></tbody>
-      </table>
+
+      <!-- To review section (wrong/partial on first attempt) -->
+      <div id="results-weak-section" class="hidden">
+        <div class="results-section-header results-section-weak">
+          <span class="results-section-icon">&#9888;</span>
+          <span id="results-weak-title">To review</span>
+        </div>
+        <table class="results-table-inner">
+          <thead>
+            <tr><th>🇫🇷 French</th><th>🇪🇸 Correct Spanish</th><th>Your answer</th><th>Next review</th></tr>
+          </thead>
+          <tbody id="results-weak-tbody"></tbody>
+        </table>
+      </div>
+
+      <!-- Mastered section (correct on first attempt) -->
+      <div id="results-strong-section" class="hidden">
+        <div class="results-section-header results-section-strong">
+          <span class="results-section-icon">&#10003;</span>
+          <span id="results-strong-title">Mastered</span>
+        </div>
+        <table class="results-table-inner">
+          <thead>
+            <tr><th>🇫🇷 French</th><th>🇪🇸 Spanish</th><th>Next review</th></tr>
+          </thead>
+          <tbody id="results-strong-tbody"></tbody>
+        </table>
+      </div>
+
       <div class="review-actions">
         <button id="btn-new-session" class="btn-secondary">New image</button>
-        <button id="btn-review-again" class="btn-primary">Review again</button>
+        <button id="btn-weak-session" class="btn-warn hidden">Practice weak words</button>
+        <button id="btn-review-again" class="btn-primary">Full review</button>
       </div>
     </div>
   </section>

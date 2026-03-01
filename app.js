@@ -513,10 +513,34 @@ const statCorrect   = document.getElementById('stat-correct');
 const statPartial   = document.getElementById('stat-partial');
 const statWrong     = document.getElementById('stat-wrong');
 
-function startQuiz() {
+// Persist weak words to localStorage keyed by vocab set (based on french words joined)
+function weakWordsKey() {
+  return 'weak_' + State.vocab.map(p => p.french.trim().toLowerCase()).sort().join('|').substring(0, 120);
+}
+
+function saveWeakWords() {
+  const weak = State.cards
+    .filter(c => c.firstAttempt === 'wrong' || c.firstAttempt === 'partial')
+    .map(c => ({ french: c.french, spanish: c.spanish, firstAttempt: c.firstAttempt, userAnswer: c.userAnswer }));
+  localStorage.setItem(weakWordsKey(), JSON.stringify(weak));
+  log(`Saved ${weak.length} weak word(s) to localStorage`);
+}
+
+function loadWeakWords() {
+  return JSON.parse(localStorage.getItem(weakWordsKey()) || '[]');
+}
+
+function startQuiz(cardsOverride = null) {
   quizImage.src = State.imageDataURL;
-  State.cards   = State.vocab.map(p => makeCard(p.french, p.spanish));
-  State.queue   = shuffle(State.cards.map((_, i) => i));
+  State.cards   = (cardsOverride || State.vocab).map(p => makeCard(p.french, p.spanish));
+  // firstAttempt: null = not yet seen | 'correct' | 'partial' | 'wrong'
+  State.cards.forEach(c => {
+    c.firstAttempt  = null;
+    c.userAnswer    = '';
+    c.reinforced    = false;  // true once the one reinforcement attempt has happened
+    c.sessionResult = null;
+  });
+  State.queue    = shuffle(State.cards.map((_, i) => i));
   State.queuePos = 0;
   State.sessionStats = { correct: 0, partial: 0, wrong: 0 };
   updateStatsBar();
@@ -525,33 +549,44 @@ function startQuiz() {
 }
 
 function showNextCard() {
-  while (State.queuePos < State.queue.length) {
-    if (State.cards[State.queue[State.queuePos]].sessionResult === 'correct') {
-      State.queuePos++;
-    } else break;
+  // Advance past cards that are fully done for this session
+  while (State.queuePos < State.queue.length &&
+         State.cards[State.queue[State.queuePos]].sessionResult === 'done') {
+    State.queuePos++;
   }
 
   if (State.queuePos >= State.queue.length) {
-    const pending = State.cards.filter(c => c.sessionResult !== 'correct');
-    if (pending.length === 0) { endSession(); return; }
-    const pendingIdx = State.cards.map((c,i) => c.sessionResult !== 'correct' ? i : -1).filter(i => i >= 0);
-    State.queue.push(...shuffle(pendingIdx));
+    endSession();
+    return;
   }
 
   const ci   = State.queue[State.queuePos];
   const card = State.cards[ci];
+
+  // Label the card if it's a reinforcement attempt
+  const isReinforcement = card.firstAttempt !== null;
   quizWordEl.textContent = card.french;
   quizInput.value = '';
   quizFeedback.classList.add('hidden');
   btnNext.classList.add('hidden');
   quizInput.disabled = false;
   quizForm.querySelector('button[type="submit"]').disabled = false;
+
+  // Show reinforcement label on the prompt
+  const promptEl = document.querySelector('.quiz-prompt');
+  if (isReinforcement) {
+    promptEl.innerHTML = 'French &rarr; Spanish: <span class="reinforce-badge">Try again</span>';
+  } else {
+    promptEl.innerHTML = 'French &rarr; Spanish:';
+  }
+
   quizInput.focus();
 
-  const done  = State.cards.filter(c => c.sessionResult === 'correct').length;
+  // Progress: based on first-attempt seen cards
+  const seen  = State.cards.filter(c => c.firstAttempt !== null).length;
   const total = State.cards.length;
-  progressBar.style.width  = `${total ? Math.round(done / total * 100) : 0}%`;
-  progressLabel.textContent = `${done} / ${total} mastered this session`;
+  progressBar.style.width  = `${total ? Math.round(seen / total * 100) : 0}%`;
+  progressLabel.textContent = `${seen} / ${total} words seen`;
 }
 
 quizForm.addEventListener('submit', e => {
@@ -559,31 +594,51 @@ quizForm.addEventListener('submit', e => {
   const ci   = State.queue[State.queuePos];
   const card = State.cards[ci];
   const { quality, verdict } = evaluate(quizInput.value, card.spanish);
+  const isFirstAttempt = card.firstAttempt === null;
 
   quizInput.disabled = true;
   quizForm.querySelector('button[type="submit"]').disabled = true;
 
+  // Build feedback message
   quizFeedback.className = `quiz-feedback ${verdict}`;
-  if (verdict === 'correct')
+  if (verdict === 'correct') {
     quizFeedback.innerHTML = `Correct! <strong>${escHtml(card.spanish)}</strong>`;
-  else if (verdict === 'partial')
+  } else if (verdict === 'partial') {
     quizFeedback.innerHTML = `Close — the answer is <strong>${escHtml(card.spanish)}</strong>`;
-  else
+  } else {
     quizFeedback.innerHTML = `Incorrect — the answer is <strong>${escHtml(card.spanish)}</strong>`;
-
+  }
   quizFeedback.classList.remove('hidden');
   btnNext.classList.remove('hidden');
 
+  // Update SM-2
   sm2Update(card, quality);
 
-  if (verdict === 'correct') {
-    if (card.sessionResult !== 'correct') { State.sessionStats.correct++; card.sessionResult = 'correct'; }
-  } else if (verdict === 'partial') {
-    if (card.sessionResult === null) { State.sessionStats.partial++; card.sessionResult = 'partial'; }
-    State.queue.splice(Math.min(State.queuePos + 3, State.queue.length), 0, ci);
+  if (isFirstAttempt) {
+    // Record first attempt
+    card.firstAttempt = verdict;
+    card.userAnswer   = quizInput.value.trim();
+
+    if (verdict === 'correct') {
+      State.sessionStats.correct++;
+      card.sessionResult = 'done';  // correct first try → done immediately
+    } else if (verdict === 'partial') {
+      State.sessionStats.partial++;
+      // One reinforcement: insert 3 spots ahead
+      State.queue.splice(Math.min(State.queuePos + 3, State.queue.length), 0, ci);
+    } else {
+      State.sessionStats.wrong++;
+      // One reinforcement: insert 2 spots ahead
+      State.queue.splice(Math.min(State.queuePos + 2, State.queue.length), 0, ci);
+    }
   } else {
-    if (card.sessionResult === null) { State.sessionStats.wrong++; card.sessionResult = 'wrong'; }
-    State.queue.splice(Math.min(State.queuePos + 2, State.queue.length), 0, ci);
+    // This is the reinforcement attempt — mark done regardless of result
+    card.sessionResult = 'done';
+    card.reinforced    = true;
+    if (verdict === 'correct') {
+      quizFeedback.innerHTML = `Got it this time! <strong>${escHtml(card.spanish)}</strong>`;
+      quizFeedback.className = 'quiz-feedback correct';
+    }
   }
 
   updateStatsBar();
@@ -600,30 +655,78 @@ function updateStatsBar() {
 // ----------------------------------------------------------------
 // RESULTS VIEW
 // ----------------------------------------------------------------
-const resultsTbody   = document.getElementById('results-tbody');
-const resultsSummary = document.getElementById('results-summary');
-const btnNewSession  = document.getElementById('btn-new-session');
-const btnReviewAgain = document.getElementById('btn-review-again');
+const resultsSummary     = document.getElementById('results-summary');
+const resultsWeakSection = document.getElementById('results-weak-section');
+const resultsWeakTbody   = document.getElementById('results-weak-tbody');
+const resultsWeakTitle   = document.getElementById('results-weak-title');
+const resultsStrongSection = document.getElementById('results-strong-section');
+const resultsStrongTbody   = document.getElementById('results-strong-tbody');
+const resultsStrongTitle   = document.getElementById('results-strong-title');
+const btnNewSession      = document.getElementById('btn-new-session');
+const btnWeakSession     = document.getElementById('btn-weak-session');
+const btnReviewAgain     = document.getElementById('btn-review-again');
+
+function nextReviewStr(card) {
+  if (card.interval <= 0) return 'Again today';
+  if (card.interval === 1) return 'Tomorrow';
+  return `In ${card.interval} days`;
+}
 
 function endSession() {
   log('Session complete — showing results');
-  resultsTbody.innerHTML = '';
-  State.cards.forEach(card => {
-    const result  = card.sessionResult ?? 'wrong';
-    const nextStr = card.interval <= 1 ? 'Tomorrow' : `In ${card.interval} days`;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${escHtml(card.french)}</td>
-      <td>${escHtml(card.spanish)}</td>
-      <td><span class="badge ${result}">${capitalize(result)}</span></td>
-      <td>${nextStr}</td>`;
-    resultsTbody.appendChild(tr);
-  });
+
+  const weak   = State.cards.filter(c => c.firstAttempt === 'wrong' || c.firstAttempt === 'partial');
+  const strong = State.cards.filter(c => c.firstAttempt === 'correct');
+
+  // Save weak words to localStorage for future sessions
+  saveWeakWords();
+
+  // Summary stats
   const { correct, partial, wrong } = State.sessionStats;
   resultsSummary.innerHTML = `
     <div class="result-stat green"><div class="number">${correct}</div><div class="label">Correct</div></div>
     <div class="result-stat amber"><div class="number">${partial}</div><div class="label">Close</div></div>
     <div class="result-stat red"><div class="number">${wrong}</div><div class="label">Wrong</div></div>`;
+
+  // Weak words section
+  if (weak.length > 0) {
+    resultsWeakTitle.textContent = `To review (${weak.length} word${weak.length > 1 ? 's' : ''})`;
+    resultsWeakTbody.innerHTML = '';
+    weak.forEach(card => {
+      const tr = document.createElement('tr');
+      const wasWrong = card.firstAttempt === 'wrong';
+      tr.innerHTML = `
+        <td>${escHtml(card.french)}</td>
+        <td><strong>${escHtml(card.spanish)}</strong></td>
+        <td><span class="badge ${card.firstAttempt}">${escHtml(card.userAnswer) || '—'}</span></td>
+        <td>${nextReviewStr(card)}</td>`;
+      resultsWeakTbody.appendChild(tr);
+    });
+    resultsWeakSection.classList.remove('hidden');
+    btnWeakSession.classList.remove('hidden');
+    btnWeakSession.textContent = `Practice ${weak.length} weak word${weak.length > 1 ? 's' : ''}`;
+  } else {
+    resultsWeakSection.classList.add('hidden');
+    btnWeakSession.classList.add('hidden');
+  }
+
+  // Strong words section
+  if (strong.length > 0) {
+    resultsStrongTitle.textContent = `Mastered (${strong.length} word${strong.length > 1 ? 's' : ''})`;
+    resultsStrongTbody.innerHTML = '';
+    strong.forEach(card => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escHtml(card.french)}</td>
+        <td>${escHtml(card.spanish)}</td>
+        <td>${nextReviewStr(card)}</td>`;
+      resultsStrongTbody.appendChild(tr);
+    });
+    resultsStrongSection.classList.remove('hidden');
+  } else {
+    resultsStrongSection.classList.add('hidden');
+  }
+
   showView('results');
 }
 
@@ -641,14 +744,18 @@ btnNewSession.addEventListener('click', () => {
   showView('upload');
 });
 
+// Practice only weak words
+btnWeakSession.addEventListener('click', () => {
+  const weak = State.cards.filter(c => c.firstAttempt === 'wrong' || c.firstAttempt === 'partial');
+  if (weak.length === 0) return;
+  log(`Starting weak-words session with ${weak.length} cards`);
+  startQuiz(weak.map(c => ({ french: c.french, spanish: c.spanish })));
+});
+
+// Full review of all words
 btnReviewAgain.addEventListener('click', () => {
-  State.cards.forEach(c => { c.sessionResult = null; c.lastQuality = null; });
-  State.queue    = shuffle(State.cards.map((_, i) => i));
-  State.queuePos = 0;
-  State.sessionStats = { correct: 0, partial: 0, wrong: 0 };
-  updateStatsBar();
-  showView('quiz');
-  showNextCard();
+  log('Starting full review session');
+  startQuiz(State.vocab);
 });
 
 // ----------------------------------------------------------------

@@ -703,6 +703,91 @@ input:focus {
 .badge.wrong    { background: var(--color-wrong-bg);   color: var(--color-primary); }
 
 /* =========================================
+   RESULTS SECTIONS
+   ========================================= */
+.results-section-header {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .65rem 1rem;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: .9rem;
+  margin: 1.2rem 0 .5rem;
+}
+.results-section-icon { font-size: 1.1rem; }
+.results-section-weak {
+  background: var(--color-wrong-bg);
+  color: var(--color-primary);
+  border: 1.5px solid #f0b0aa;
+}
+.results-section-strong {
+  background: var(--color-correct-bg);
+  color: var(--color-correct);
+  border: 1.5px solid #a8dfc0;
+}
+
+.results-table-inner {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .9rem;
+  margin-bottom: .8rem;
+}
+.results-table-inner th {
+  background: var(--color-gold-light);
+  color: #7a5500;
+  font-size: .75rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: .55rem .85rem;
+  border-bottom: 2px solid #e0c080;
+  text-align: left;
+  font-weight: 700;
+}
+.results-table-inner td {
+  padding: .5rem .85rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.results-table-inner tr:last-child td { border-bottom: none; }
+.results-table-inner tr:hover td { background: #fffaf5; }
+
+/* Reinforce badge on quiz prompt */
+.reinforce-badge {
+  display: inline-block;
+  background: var(--color-partial-bg);
+  color: var(--color-partial);
+  border: 1px solid #f0d080;
+  font-size: .72rem;
+  font-weight: 700;
+  padding: .1rem .55rem;
+  border-radius: 99px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  margin-left: .4rem;
+  vertical-align: middle;
+}
+
+/* Warn button (practice weak words) */
+.btn-warn {
+  display: inline-block;
+  padding: .65rem 1.5rem;
+  border-radius: 8px;
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all var(--transition);
+  background: linear-gradient(135deg, #d68910, #b7770d);
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(214,137,16,.3);
+}
+.btn-warn:hover {
+  background: linear-gradient(135deg, #b7770d, #9a6209);
+  transform: translateY(-2px);
+  box-shadow: 0 5px 16px rgba(214,137,16,.38);
+}
+
+/* =========================================
    ANIMATIONS
    ========================================= */
 @keyframes fadeIn {
