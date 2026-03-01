@@ -173,10 +173,10 @@ function anthropicFetch(endpoint, body, apiKey) {
     xhr.timeout = API_TIMEOUT_MS;
 
     xhr.onload = () => {
-      log(`Response: HTTP ${xhr.status} (${xhr.responseText.length} chars)`);
+      log(`Response: HTTP ${xhr.status} — raw: ${xhr.responseText.substring(0, 300)}`);
       let data = {};
       try { data = JSON.parse(xhr.responseText); } catch (e) {
-        log(`JSON parse error: ${e.message} — raw: ${xhr.responseText.substring(0, 200)}`, 'error');
+        log(`JSON parse error: ${e.message}`, 'error');
       }
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(data);
@@ -202,6 +202,7 @@ function anthropicFetch(endpoint, body, apiKey) {
       }
     };
 
+    log(`Sending body: ${bodyStr.substring(0, 200)}`);
     xhr.send(bodyStr);
   });
 }
