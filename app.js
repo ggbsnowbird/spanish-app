@@ -415,15 +415,10 @@ btnExtract.addEventListener('click', async () => {
   log('Starting extraction pipeline…');
 
   try {
-    // Step 1 — resize
-    setStatus('Step 1/3 — Resizing image…', 'loading');
-    log('Resizing image…');
-    const resized = await resizeImage(State.imageDataURL, 512);
-    State.imageDataURL = resized;
-    imagePreview.src   = resized;  // show resized version
-
-    // Step 2 — call Claude Vision
-    setStatus('Step 2/2 — Sending to Claude Vision (up to 30s)…', 'loading');
+    // Send original image — no resize, preserves quality for Claude to read handwriting
+    const sizeKB = Math.round(State.imageDataURL.length * 0.75 / 1024);
+    log(`Original image: ${sizeKB} KB — sending as-is`);
+    setStatus('Sending to Claude Vision (up to 30s)…', 'loading');
     const pairs = await extractVocabFromImage(State.imageDataURL, State.apiKey);
 
     if (pairs.length === 0) {
