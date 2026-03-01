@@ -159,21 +159,34 @@ const OPENAI_TIMEOUT_MS = 30000;  // 30 s
 async function checkConnectivity() {
   log('Testing connectivity to api.openai.com…');
 
-  // Step 1: GET test
+  // Step 1: GET without auth (no preflight)
   try {
     const res = await fetch('https://api.openai.com/v1/models', {
       method: 'GET',
       signal: AbortSignal.timeout(8000),
     });
-    log(`GET check: HTTP ${res.status} ${res.status === 401 ? '(reachable ✓)' : ''}`, 'success');
+    log(`GET (no auth) check: HTTP ${res.status} ✓`, 'success');
   } catch (err) {
     log(`GET check FAILED: ${err.name} — ${err.message}`, 'error');
-    log('Network is blocking all requests to api.openai.com', 'warn');
     return false;
   }
 
-  // Step 2: POST test with tiny body (no image)
-  log('Testing POST to api.openai.com with tiny body…');
+  // Step 2: OPTIONS preflight simulation — does the network block preflights?
+  log('Testing OPTIONS preflight to api.openai.com…');
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'OPTIONS',
+      signal: AbortSignal.timeout(8000),
+    });
+    log(`OPTIONS check: HTTP ${res.status} ✓`, 'success');
+  } catch (err) {
+    log(`OPTIONS/preflight FAILED: ${err.name} — ${err.message}`, 'error');
+    log('Your network (router/ISP/firewall) is blocking CORS preflight requests to api.openai.com', 'warn');
+    return false;
+  }
+
+  // Step 3: POST with Authorization header (triggers preflight)
+  log('Testing POST with Authorization header…');
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', 'https://api.openai.com/v1/chat/completions', true);
@@ -181,17 +194,16 @@ async function checkConnectivity() {
     xhr.setRequestHeader('Authorization', `Bearer INVALID_KEY_TEST`);
     xhr.timeout = 10000;
     xhr.onload = () => {
-      // 401 = server received the POST, auth failed — that's fine, POST works
-      log(`POST check: HTTP ${xhr.status} ${xhr.status === 401 ? '(POST reachable ✓)' : ''}`, 'success');
+      log(`POST+Auth check: HTTP ${xhr.status} ✓ (network allows authorized POST)`, 'success');
       resolve(true);
     };
     xhr.onerror = () => {
-      log(`POST check FAILED — browser is blocking POST requests to api.openai.com`, 'error');
-      log('This is likely a Safari privacy setting or browser extension. Try: Safari > Settings > Privacy > uncheck "Prevent cross-site tracking", or try Chrome/Firefox.', 'warn');
+      log(`POST+Auth check FAILED — network blocks authenticated POST to api.openai.com`, 'error');
+      log('Check: 1) Chrome extensions (uBlock, AdGuard, etc) 2) Corporate/school network firewall 3) DNS filtering (NextDNS, Pi-hole)', 'warn');
       resolve(false);
     };
     xhr.ontimeout = () => {
-      log('POST check timed out', 'warn');
+      log('POST+Auth check timed out', 'warn');
       resolve(false);
     };
     xhr.send(JSON.stringify({ model: 'gpt-4o-mini', max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] }));
