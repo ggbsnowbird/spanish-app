@@ -156,6 +156,24 @@ function evaluate(input, expected) {
 // ----------------------------------------------------------------
 const OPENAI_TIMEOUT_MS = 30000;  // 30 s
 
+async function checkConnectivity() {
+  log('Testing connectivity to api.openai.com…');
+  try {
+    // A HEAD request to the models endpoint — no auth needed, just checks reachability
+    const res = await fetch('https://api.openai.com/v1/models', {
+      method: 'GET',
+      signal: AbortSignal.timeout(8000),
+    });
+    // 401 = reached the server (unauthorized is fine, it means network is open)
+    log(`Connectivity check: HTTP ${res.status} ${res.status === 401 ? '(reachable ✓)' : ''}`, res.status < 500 ? 'success' : 'warn');
+    return true;
+  } catch (err) {
+    log(`Connectivity check FAILED: ${err.name} — ${err.message}`, 'error');
+    log('Possible causes: VPN, firewall, browser extension, or network blocking api.openai.com', 'warn');
+    return false;
+  }
+}
+
 async function openAIFetch(endpoint, body, apiKey) {
   const controller = new AbortController();
   const timer = setTimeout(() => {
@@ -163,7 +181,10 @@ async function openAIFetch(endpoint, body, apiKey) {
     log(`Request aborted after ${OPENAI_TIMEOUT_MS / 1000}s timeout`, 'error');
   }, OPENAI_TIMEOUT_MS);
 
-  log(`POST ${endpoint} …`);
+  const bodyStr  = JSON.stringify(body);
+  const bodySizeKB = Math.round(bodyStr.length / 1024);
+  log(`POST ${endpoint} (payload: ${bodySizeKB} KB) …`);
+
   try {
     const res = await fetch(`https://api.openai.com/v1${endpoint}`, {
       method: 'POST',
@@ -172,7 +193,7 @@ async function openAIFetch(endpoint, body, apiKey) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
-      body: JSON.stringify(body),
+      body: bodyStr,
     });
     clearTimeout(timer);
     log(`Response: HTTP ${res.status}`);
@@ -186,6 +207,10 @@ async function openAIFetch(endpoint, body, apiKey) {
   } catch (err) {
     clearTimeout(timer);
     if (err.name === 'AbortError') throw new Error('Request timed out after 30 seconds.');
+    // Enrich "Failed to fetch" with more detail
+    if (err.message === 'Failed to fetch' || err.message === 'Load failed') {
+      throw new Error(`Network error (${err.name}): could not reach api.openai.com. Check your internet connection, VPN, or browser extensions blocking the request.`);
+    }
     throw err;
   }
 }
@@ -289,12 +314,18 @@ btnValidateKey.addEventListener('click', async () => {
   const key = apiKeyInput.value.trim();
   if (!key) { setKeyStatus('Enter a key first.', 'error'); return; }
   btnValidateKey.disabled = true;
-  setKeyStatus('Validating…', 'loading');
+  setKeyStatus('Checking connectivity…', 'loading');
   try {
+    const reachable = await checkConnectivity();
+    if (!reachable) {
+      setKeyStatus('Cannot reach api.openai.com — check your network or browser extensions.', 'error');
+      return;
+    }
+    setKeyStatus('Validating key…', 'loading');
     await validateApiKey(key);
     setKeyStatus('Key is valid ✓', 'success');
   } catch (err) {
-    setKeyStatus(`Invalid key: ${err.message}`, 'error');
+    setKeyStatus(`Error: ${err.message}`, 'error');
     log(`Key validation failed: ${err.message}`, 'error');
   } finally {
     btnValidateKey.disabled = false;
@@ -384,8 +415,15 @@ btnExtract.addEventListener('click', async () => {
     State.imageDataURL = resized;
     imagePreview.src   = resized;  // show resized version
 
-    // Step 2 — call OpenAI
-    setStatus('Step 2/2 — Sending to OpenAI Vision (up to 30s)…', 'loading');
+    // Step 2 — connectivity check
+    setStatus('Step 2/3 — Checking connectivity to OpenAI…', 'loading');
+    const reachable = await checkConnectivity();
+    if (!reachable) {
+      throw new Error('Cannot reach api.openai.com. Check your network, VPN, or browser extensions (e.g. ad blockers, privacy shields).');
+    }
+
+    // Step 3 — call OpenAI Vision
+    setStatus('Step 3/3 — Sending to OpenAI Vision (up to 30s)…', 'loading');
     const pairs = await extractVocabFromImage(State.imageDataURL, State.apiKey);
 
     if (pairs.length === 0) {
