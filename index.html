@@ -1,17 +1,29 @@
 <!DOCTYPE html>
 <html lang="fr">
+<!-- v5 · 6bc1586 -->
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Spanish Vocabulary Trainer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
   <!-- ===== HEADER ===== -->
   <header>
-    <h1>Spanish Vocabulary Trainer</h1>
-    <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
+    <div class="header-inner">
+      <div class="header-title">
+        <span class="header-flag">🇪🇸</span>
+        <div>
+          <h1>Vocabulario</h1>
+          <p class="header-sub">French &rarr; Spanish Trainer</p>
+        </div>
+      </div>
+      <button id="btn-settings" class="icon-btn" title="Settings">&#9881;</button>
+    </div>
   </header>
 
   <!-- ===== VIEW: SETTINGS ===== -->
@@ -134,6 +146,12 @@
       </div>
     </div>
   </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="app-footer">
+    <span>🇪🇸 Vocabulario</span>
+    <span class="footer-version">v5 &middot; 6bc1586</span>
+  </footer>
 
   <script src="app.js"></script>
 </body>
