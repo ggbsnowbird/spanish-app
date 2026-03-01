@@ -21,8 +21,12 @@
       <label for="api-key-input">OpenAI API Key</label>
       <input type="password" id="api-key-input" placeholder="sk-..." autocomplete="off" />
       <p class="hint">Your key is stored only in your browser (localStorage) and never sent anywhere except directly to OpenAI.</p>
-      <button id="btn-save-settings" class="btn-primary">Save</button>
-      <button id="btn-close-settings" class="btn-secondary">Cancel</button>
+      <div id="key-status" class="status-msg hidden"></div>
+      <div class="settings-actions">
+        <button id="btn-validate-key" class="btn-secondary">Validate key</button>
+        <button id="btn-save-settings" class="btn-primary">Save &amp; continue</button>
+        <button id="btn-close-settings" class="btn-secondary">Cancel</button>
+      </div>
     </div>
   </section>
 
@@ -41,6 +45,15 @@
       </div>
       <div id="extract-status" class="status-msg hidden"></div>
       <button id="btn-extract" class="btn-primary hidden">Extract vocabulary</button>
+
+      <!-- Debug log panel -->
+      <div id="debug-panel" class="debug-panel hidden">
+        <div class="debug-header">
+          <span>Debug log</span>
+          <button id="btn-clear-log" class="debug-clear">Clear</button>
+        </div>
+        <ul id="debug-log"></ul>
+      </div>
     </div>
   </section>
 

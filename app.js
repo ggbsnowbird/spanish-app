@@ -6,36 +6,85 @@
 'use strict';
 
 // ----------------------------------------------------------------
+// DEBUG LOG  — visible in-app panel + browser console
+// ----------------------------------------------------------------
+const debugPanel = document.getElementById('debug-panel');
+const debugLog   = document.getElementById('debug-log');
+const btnClearLog= document.getElementById('btn-clear-log');
+
+function log(msg, level = 'info') {
+  // Console
+  const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+  fn(`[SpanishApp] ${msg}`);
+
+  // In-app panel
+  debugPanel.classList.remove('hidden');
+  const li = document.createElement('li');
+  li.className = `log-${level}`;
+  const ts = new Date().toLocaleTimeString();
+  li.textContent = `[${ts}] ${msg}`;
+  debugLog.appendChild(li);
+  debugLog.scrollTop = debugLog.scrollHeight;
+}
+
+btnClearLog.addEventListener('click', () => {
+  debugLog.innerHTML = '';
+  debugPanel.classList.add('hidden');
+});
+
+// ----------------------------------------------------------------
 // STATE
 // ----------------------------------------------------------------
 const State = {
-  apiKey:     '',
-  imageDataURL: '',   // base64 data URL of uploaded image
-  vocab:      [],     // [{ french, spanish }]
-  cards:      [],     // SM-2 card objects for current session
-  queue:      [],     // indices into cards[], in play order
-  queuePos:   0,
+  apiKey:       '',
+  imageDataURL: '',   // resized base64 data URL
+  vocab:        [],   // [{ french, spanish }]
+  cards:        [],   // SM-2 card objects
+  queue:        [],
+  queuePos:     0,
   sessionStats: { correct: 0, partial: 0, wrong: 0 },
 };
+
+// ----------------------------------------------------------------
+// IMAGE RESIZE  (max 1024px, JPEG quality 0.85)
+// ----------------------------------------------------------------
+function resizeImage(dataURL, maxPx = 1024) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const { width: w, height: h } = img;
+      const scale = Math.min(1, maxPx / Math.max(w, h));
+      const nw = Math.round(w * scale);
+      const nh = Math.round(h * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width  = nw;
+      canvas.height = nh;
+      canvas.getContext('2d').drawImage(img, 0, 0, nw, nh);
+      const resized = canvas.toDataURL('image/jpeg', 0.85);
+      const origKB   = Math.round(dataURL.length * 0.75 / 1024);
+      const resizedKB= Math.round(resized.length * 0.75 / 1024);
+      log(`Image resized: ${w}×${h} → ${nw}×${nh} | ${origKB} KB → ${resizedKB} KB`);
+      resolve(resized);
+    };
+    img.onerror = () => reject(new Error('Could not load image for resizing'));
+    img.src = dataURL;
+  });
+}
 
 // ----------------------------------------------------------------
 // SM-2 CARD FACTORY
 // ----------------------------------------------------------------
 function makeCard(french, spanish) {
-  // Load persisted SM-2 data if it exists
   const key   = `sm2_${french.trim().toLowerCase()}`;
   const saved = JSON.parse(localStorage.getItem(key) || 'null');
   return {
-    french,
-    spanish,
-    // SM-2 fields
-    easeFactor:   saved?.easeFactor   ?? 2.5,
-    interval:     saved?.interval     ?? 0,    // days
-    repetitions:  saved?.repetitions  ?? 0,
-    dueDate:      saved?.dueDate      ?? 0,    // timestamp ms
-    // Session tracking
-    lastQuality:  null,   // 0-5
-    sessionResult: null,  // 'correct' | 'partial' | 'wrong'
+    french, spanish,
+    easeFactor:  saved?.easeFactor  ?? 2.5,
+    interval:    saved?.interval    ?? 0,
+    repetitions: saved?.repetitions ?? 0,
+    dueDate:     saved?.dueDate     ?? 0,
+    lastQuality:  null,
+    sessionResult: null,
     _key: key,
   };
 }
@@ -49,7 +98,6 @@ function saveCard(card) {
   }));
 }
 
-// SM-2 update given quality q (0–5)
 function sm2Update(card, q) {
   if (q >= 3) {
     if (card.repetitions === 0)      card.interval = 1;
@@ -66,12 +114,12 @@ function sm2Update(card, q) {
 }
 
 // ----------------------------------------------------------------
-// FUZZY MATCH  (returns quality 0–5)
+// FUZZY MATCH
 // ----------------------------------------------------------------
 function normalize(s) {
   return s.trim().toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // strip accents
-    .replace(/[^a-z\s]/g, '');                          // strip punctuation
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z\s]/g, '');
 }
 
 function levenshtein(a, b) {
@@ -87,43 +135,81 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
-// Returns { quality: 0|2|5, verdict: 'correct'|'partial'|'wrong' }
 function evaluate(input, expected) {
   const a = normalize(input);
   const b = normalize(expected);
-
   if (a === b) return { quality: 5, verdict: 'correct' };
-
-  // Allow 1-char typo for short words, 2-char for longer
   const maxDist = b.length <= 4 ? 1 : 2;
   if (levenshtein(a, b) <= maxDist) return { quality: 4, verdict: 'correct' };
-
-  // Partial: missing/wrong accent only (normalized match)
-  // We already normalized above — if we reach here accents were NOT the only diff.
-  // Check if only ONE accent was wrong (raw comparison after stripping just accents)
   const rawA = input.trim().toLowerCase().replace(/[^a-z\s\u00C0-\u024F]/gi,'');
   const rawB = expected.trim().toLowerCase().replace(/[^a-z\s\u00C0-\u024F]/gi,'');
-  if (levenshtein(normalize(rawA), normalize(rawB)) === 0 && rawA !== rawB) {
-    // Accent-only error
+  if (levenshtein(normalize(rawA), normalize(rawB)) === 0 && rawA !== rawB)
     return { quality: 3, verdict: 'partial' };
-  }
-
-  // Partial: close but not quite (distance ≤ 4 for longer words)
   const dist = levenshtein(a, b);
   const threshold = Math.ceil(b.length * 0.4);
   if (dist <= threshold && threshold >= 2) return { quality: 2, verdict: 'partial' };
-
   return { quality: 0, verdict: 'wrong' };
 }
 
 // ----------------------------------------------------------------
-// OPENAI VISION  →  vocab list
+// OPENAI HELPERS
 // ----------------------------------------------------------------
-async function extractVocabFromImage(imageDataURL, apiKey) {
-  const base64 = imageDataURL.split(',')[1];
-  const mimeType = imageDataURL.match(/data:(image\/\w+);/)?.[1] ?? 'image/jpeg';
+const OPENAI_TIMEOUT_MS = 30000;  // 30 s
 
-  const body = {
+async function openAIFetch(endpoint, body, apiKey) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+    log(`Request aborted after ${OPENAI_TIMEOUT_MS / 1000}s timeout`, 'error');
+  }, OPENAI_TIMEOUT_MS);
+
+  log(`POST ${endpoint} …`);
+  try {
+    const res = await fetch(`https://api.openai.com/v1${endpoint}`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+    clearTimeout(timer);
+    log(`Response: HTTP ${res.status}`);
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = data?.error?.message ?? `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') throw new Error('Request timed out after 30 seconds.');
+    throw err;
+  }
+}
+
+// Validate API key with a tiny cheap call
+async function validateApiKey(apiKey) {
+  log('Validating API key…');
+  const data = await openAIFetch('/chat/completions', {
+    model: 'gpt-4o-mini',
+    max_tokens: 1,
+    messages: [{ role: 'user', content: 'Hi' }],
+  }, apiKey);
+  log('API key is valid ✓', 'success');
+  return true;
+}
+
+// Extract vocab from image
+async function extractVocabFromImage(imageDataURL, apiKey) {
+  const base64   = imageDataURL.split(',')[1];
+  const mimeType = imageDataURL.match(/data:(image\/\w+);/)?.[1] ?? 'image/jpeg';
+  const sizeKB   = Math.round(base64.length * 0.75 / 1024);
+  log(`Sending image to OpenAI Vision (${sizeKB} KB, detail: low)…`);
+
+  const data = await openAIFetch('/chat/completions', {
     model: 'gpt-4o',
     max_tokens: 1500,
     messages: [{
@@ -140,34 +226,20 @@ If you cannot find any pairs, return an empty array [].`,
         },
         {
           type: 'image_url',
-          image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'high' },
+          image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'low' },
         },
       ],
     }],
-  };
+  }, apiKey);
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message ?? `HTTP ${res.status}`);
-  }
-
-  const data = await res.json();
-  const text = data.choices?.[0]?.message?.content ?? '';
-
-  // Strip possible markdown code fences
+  const text    = data.choices?.[0]?.message?.content ?? '';
+  log(`Raw response: ${text.substring(0, 120)}…`);
   const cleaned = text.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-  const pairs = JSON.parse(cleaned);
+  const pairs   = JSON.parse(cleaned);
   if (!Array.isArray(pairs)) throw new Error('Unexpected response format from OpenAI.');
-  return pairs.filter(p => p.french && p.spanish);
+  const filtered = pairs.filter(p => p.french && p.spanish);
+  log(`Extracted ${filtered.length} word pairs ✓`, 'success');
+  return filtered;
 }
 
 // ----------------------------------------------------------------
@@ -189,10 +261,18 @@ function showView(name) {
 // ----------------------------------------------------------------
 // SETTINGS
 // ----------------------------------------------------------------
-const apiKeyInput     = document.getElementById('api-key-input');
-const btnSaveSettings = document.getElementById('btn-save-settings');
-const btnCloseSettings= document.getElementById('btn-close-settings');
-const btnSettings     = document.getElementById('btn-settings');
+const apiKeyInput      = document.getElementById('api-key-input');
+const btnSaveSettings  = document.getElementById('btn-save-settings');
+const btnCloseSettings = document.getElementById('btn-close-settings');
+const btnSettings      = document.getElementById('btn-settings');
+const btnValidateKey   = document.getElementById('btn-validate-key');
+const keyStatus        = document.getElementById('key-status');
+
+function setKeyStatus(msg, type) {
+  keyStatus.textContent = msg;
+  keyStatus.className   = `status-msg ${type}`;
+  keyStatus.classList.remove('hidden');
+}
 
 function loadSettings() {
   State.apiKey = localStorage.getItem('openai_api_key') ?? '';
@@ -201,15 +281,35 @@ function loadSettings() {
 
 btnSettings.addEventListener('click', () => {
   apiKeyInput.value = State.apiKey;
+  keyStatus.classList.add('hidden');
   showView('settings');
 });
+
+btnValidateKey.addEventListener('click', async () => {
+  const key = apiKeyInput.value.trim();
+  if (!key) { setKeyStatus('Enter a key first.', 'error'); return; }
+  btnValidateKey.disabled = true;
+  setKeyStatus('Validating…', 'loading');
+  try {
+    await validateApiKey(key);
+    setKeyStatus('Key is valid ✓', 'success');
+  } catch (err) {
+    setKeyStatus(`Invalid key: ${err.message}`, 'error');
+    log(`Key validation failed: ${err.message}`, 'error');
+  } finally {
+    btnValidateKey.disabled = false;
+  }
+});
+
 btnSaveSettings.addEventListener('click', () => {
   const key = apiKeyInput.value.trim();
-  if (!key) { alert('Please enter a valid API key.'); return; }
+  if (!key) { setKeyStatus('Please enter a valid API key.', 'error'); return; }
   State.apiKey = key;
   localStorage.setItem('openai_api_key', key);
+  log('API key saved to localStorage');
   showView('upload');
 });
+
 btnCloseSettings.addEventListener('click', () => showView('upload'));
 
 // ----------------------------------------------------------------
@@ -231,8 +331,10 @@ function setStatus(msg, type) {
 function handleFile(file) {
   if (!file || !file.type.startsWith('image/')) {
     setStatus('Please select a valid image file.', 'error');
+    log('Invalid file type selected', 'warn');
     return;
   }
+  log(`File selected: ${file.name} (${Math.round(file.size / 1024)} KB, ${file.type})`);
   const reader = new FileReader();
   reader.onload = e => {
     State.imageDataURL = e.target.result;
@@ -241,13 +343,17 @@ function handleFile(file) {
     dropLabel.classList.add('hidden');
     extractStatus.classList.add('hidden');
     btnExtract.classList.remove('hidden');
+    log('Image loaded into memory, ready to extract');
+  };
+  reader.onerror = () => {
+    log('FileReader error', 'error');
+    setStatus('Failed to read the image file.', 'error');
   };
   reader.readAsDataURL(file);
 }
 
 fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
 
-// Drag-and-drop
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
 dropZone.addEventListener('drop', e => {
@@ -258,23 +364,45 @@ dropZone.addEventListener('drop', e => {
 
 btnExtract.addEventListener('click', async () => {
   if (!State.apiKey) {
-    setStatus('No API key set. Click the gear icon to enter your OpenAI key.', 'error');
+    setStatus('No API key set. Click the gear icon ⚙ to enter your OpenAI key.', 'error');
+    log('Extraction attempted without API key', 'warn');
     return;
   }
+  if (!State.imageDataURL) {
+    setStatus('Please select an image first.', 'error');
+    return;
+  }
+
   btnExtract.disabled = true;
-  setStatus('Sending image to OpenAI Vision — please wait...', 'loading');
+  log('Starting extraction pipeline…');
+
   try {
+    // Step 1 — resize
+    setStatus('Step 1/2 — Resizing image…', 'loading');
+    log('Resizing image…');
+    const resized = await resizeImage(State.imageDataURL, 1024);
+    State.imageDataURL = resized;
+    imagePreview.src   = resized;  // show resized version
+
+    // Step 2 — call OpenAI
+    setStatus('Step 2/2 — Sending to OpenAI Vision (up to 30s)…', 'loading');
     const pairs = await extractVocabFromImage(State.imageDataURL, State.apiKey);
+
     if (pairs.length === 0) {
-      setStatus('No word pairs found. Try a clearer image or add them manually in the next step.', 'error');
+      setStatus('No word pairs found. Try a clearer image or add them manually.', 'error');
+      log('OpenAI returned 0 pairs', 'warn');
       btnExtract.disabled = false;
       return;
     }
+
     State.vocab = pairs;
     setStatus(`Found ${pairs.length} word pair${pairs.length > 1 ? 's' : ''}!`, 'success');
+    log(`Done — building review view with ${pairs.length} pairs`);
     setTimeout(() => buildReviewView(), 800);
+
   } catch (err) {
     setStatus(`Error: ${err.message}`, 'error');
+    log(`Extraction failed: ${err.message}`, 'error');
     btnExtract.disabled = false;
   }
 });
@@ -282,10 +410,10 @@ btnExtract.addEventListener('click', async () => {
 // ----------------------------------------------------------------
 // REVIEW VIEW
 // ----------------------------------------------------------------
-const vocabTbody  = document.getElementById('vocab-tbody');
-const btnAddRow   = document.getElementById('btn-add-row');
-const btnStartQuiz= document.getElementById('btn-start-quiz');
-const reviewImage = document.getElementById('review-image');
+const vocabTbody   = document.getElementById('vocab-tbody');
+const btnAddRow    = document.getElementById('btn-add-row');
+const btnStartQuiz = document.getElementById('btn-start-quiz');
+const reviewImage  = document.getElementById('review-image');
 
 function buildReviewView() {
   reviewImage.src = State.imageDataURL;
@@ -300,18 +428,14 @@ function renderVocabTable() {
     tr.innerHTML = `
       <td contenteditable="true" data-i="${i}" data-field="french">${escHtml(pair.french)}</td>
       <td contenteditable="true" data-i="${i}" data-field="spanish">${escHtml(pair.spanish)}</td>
-      <td><button class="btn-delete-row" data-i="${i}" title="Remove row">&#10005;</button></td>`;
+      <td><button class="btn-delete-row" data-i="${i}" title="Remove">&#10005;</button></td>`;
     vocabTbody.appendChild(tr);
   });
-  // Live edit sync
   vocabTbody.querySelectorAll('[contenteditable]').forEach(cell => {
     cell.addEventListener('input', () => {
-      const i = +cell.dataset.i;
-      const f = cell.dataset.field;
-      State.vocab[i][f] = cell.textContent.trim();
+      State.vocab[+cell.dataset.i][cell.dataset.field] = cell.textContent.trim();
     });
   });
-  // Delete buttons
   vocabTbody.querySelectorAll('.btn-delete-row').forEach(btn => {
     btn.addEventListener('click', () => {
       State.vocab.splice(+btn.dataset.i, 1);
@@ -323,78 +447,61 @@ function renderVocabTable() {
 btnAddRow.addEventListener('click', () => {
   State.vocab.push({ french: '', spanish: '' });
   renderVocabTable();
-  // Focus last French cell
-  const cells = vocabTbody.querySelectorAll('[data-field="french"]');
-  cells[cells.length - 1]?.focus();
+  vocabTbody.querySelectorAll('[data-field="french"]').forEach((c, i, a) => {
+    if (i === a.length - 1) c.focus();
+  });
 });
 
 btnStartQuiz.addEventListener('click', () => {
   const clean = State.vocab.filter(p => p.french.trim() && p.spanish.trim());
   if (clean.length === 0) { alert('Add at least one word pair first.'); return; }
   State.vocab = clean;
+  log(`Starting quiz with ${clean.length} cards`);
   startQuiz();
 });
 
 // ----------------------------------------------------------------
 // QUIZ ENGINE
 // ----------------------------------------------------------------
-const quizImage    = document.getElementById('quiz-image');
-const quizWordEl   = document.getElementById('quiz-word');
-const quizForm     = document.getElementById('quiz-form');
-const quizInput    = document.getElementById('quiz-input');
-const quizFeedback = document.getElementById('quiz-feedback');
-const btnNext      = document.getElementById('btn-next');
-const progressBar  = document.getElementById('progress-bar');
-const progressLabel= document.getElementById('progress-label');
-const statCorrect  = document.getElementById('stat-correct');
-const statPartial  = document.getElementById('stat-partial');
-const statWrong    = document.getElementById('stat-wrong');
+const quizImage     = document.getElementById('quiz-image');
+const quizWordEl    = document.getElementById('quiz-word');
+const quizForm      = document.getElementById('quiz-form');
+const quizInput     = document.getElementById('quiz-input');
+const quizFeedback  = document.getElementById('quiz-feedback');
+const btnNext       = document.getElementById('btn-next');
+const progressBar   = document.getElementById('progress-bar');
+const progressLabel = document.getElementById('progress-label');
+const statCorrect   = document.getElementById('stat-correct');
+const statPartial   = document.getElementById('stat-partial');
+const statWrong     = document.getElementById('stat-wrong');
 
 function startQuiz() {
   quizImage.src = State.imageDataURL;
-
-  // Build card list
-  State.cards = State.vocab.map(p => makeCard(p.french, p.spanish));
-
-  // Build initial queue: all cards, shuffled
-  State.queue = shuffle(State.cards.map((_, i) => i));
+  State.cards   = State.vocab.map(p => makeCard(p.french, p.spanish));
+  State.queue   = shuffle(State.cards.map((_, i) => i));
   State.queuePos = 0;
   State.sessionStats = { correct: 0, partial: 0, wrong: 0 };
-
   updateStatsBar();
   showView('quiz');
   showNextCard();
 }
 
 function showNextCard() {
-  // Find the next card index that is not yet 'correct' in this session
-  // The queue may have repeats for wrong answers
   while (State.queuePos < State.queue.length) {
-    const ci = State.queue[State.queuePos];
-    if (State.cards[ci].sessionResult === 'correct') {
+    if (State.cards[State.queue[State.queuePos]].sessionResult === 'correct') {
       State.queuePos++;
-      continue;
-    }
-    break;
+    } else break;
   }
 
   if (State.queuePos >= State.queue.length) {
-    // Check if any cards still need repeating
     const pending = State.cards.filter(c => c.sessionResult !== 'correct');
-    if (pending.length === 0) {
-      endSession();
-      return;
-    }
-    // Re-queue pending cards (wrong/partial), shuffled
-    const pendingIdx = State.cards
-      .map((c, i) => c.sessionResult !== 'correct' ? i : -1)
-      .filter(i => i >= 0);
+    if (pending.length === 0) { endSession(); return; }
+    const pendingIdx = State.cards.map((c,i) => c.sessionResult !== 'correct' ? i : -1).filter(i => i >= 0);
     State.queue.push(...shuffle(pendingIdx));
   }
 
-  const ci = State.queue[State.queuePos];
+  const ci   = State.queue[State.queuePos];
   const card = State.cards[ci];
-
   quizWordEl.textContent = card.french;
   quizInput.value = '';
   quizFeedback.classList.add('hidden');
@@ -403,11 +510,9 @@ function showNextCard() {
   quizForm.querySelector('button[type="submit"]').disabled = false;
   quizInput.focus();
 
-  // Progress: % of cards with sessionResult === 'correct'
-  const done   = State.cards.filter(c => c.sessionResult === 'correct').length;
-  const total  = State.cards.length;
-  const pct    = total ? Math.round((done / total) * 100) : 0;
-  progressBar.style.width  = pct + '%';
+  const done  = State.cards.filter(c => c.sessionResult === 'correct').length;
+  const total = State.cards.length;
+  progressBar.style.width  = `${total ? Math.round(done / total * 100) : 0}%`;
   progressLabel.textContent = `${done} / ${total} mastered this session`;
 }
 
@@ -417,52 +522,36 @@ quizForm.addEventListener('submit', e => {
   const card = State.cards[ci];
   const { quality, verdict } = evaluate(quizInput.value, card.spanish);
 
-  // Disable input while feedback shown
   quizInput.disabled = true;
   quizForm.querySelector('button[type="submit"]').disabled = true;
 
-  // Feedback message
   quizFeedback.className = `quiz-feedback ${verdict}`;
-  if (verdict === 'correct') {
-    quizFeedback.innerHTML = `Correct! <strong>${card.spanish}</strong>`;
-  } else if (verdict === 'partial') {
-    quizFeedback.innerHTML = `Close — the answer is <strong>${card.spanish}</strong>`;
-  } else {
-    quizFeedback.innerHTML = `Incorrect — the answer is <strong>${card.spanish}</strong>`;
-  }
+  if (verdict === 'correct')
+    quizFeedback.innerHTML = `Correct! <strong>${escHtml(card.spanish)}</strong>`;
+  else if (verdict === 'partial')
+    quizFeedback.innerHTML = `Close — the answer is <strong>${escHtml(card.spanish)}</strong>`;
+  else
+    quizFeedback.innerHTML = `Incorrect — the answer is <strong>${escHtml(card.spanish)}</strong>`;
+
   quizFeedback.classList.remove('hidden');
   btnNext.classList.remove('hidden');
 
-  // Update SM-2
   sm2Update(card, quality);
 
-  // Update session result
   if (verdict === 'correct') {
-    if (card.sessionResult !== 'correct') {
-      State.sessionStats.correct++;
-      card.sessionResult = 'correct';
-    }
+    if (card.sessionResult !== 'correct') { State.sessionStats.correct++; card.sessionResult = 'correct'; }
   } else if (verdict === 'partial') {
-    if (card.sessionResult === null) State.sessionStats.partial++;
-    if (card.sessionResult === null) card.sessionResult = 'partial';
-    // Re-insert into queue a few spots ahead so it comes up again
-    const insertAt = Math.min(State.queuePos + 3, State.queue.length);
-    State.queue.splice(insertAt, 0, ci);
+    if (card.sessionResult === null) { State.sessionStats.partial++; card.sessionResult = 'partial'; }
+    State.queue.splice(Math.min(State.queuePos + 3, State.queue.length), 0, ci);
   } else {
-    if (card.sessionResult === null) State.sessionStats.wrong++;
-    if (card.sessionResult === null) card.sessionResult = 'wrong';
-    // Re-insert soon
-    const insertAt = Math.min(State.queuePos + 2, State.queue.length);
-    State.queue.splice(insertAt, 0, ci);
+    if (card.sessionResult === null) { State.sessionStats.wrong++; card.sessionResult = 'wrong'; }
+    State.queue.splice(Math.min(State.queuePos + 2, State.queue.length), 0, ci);
   }
 
   updateStatsBar();
 });
 
-btnNext.addEventListener('click', () => {
-  State.queuePos++;
-  showNextCard();
-});
+btnNext.addEventListener('click', () => { State.queuePos++; showNextCard(); });
 
 function updateStatsBar() {
   statCorrect.textContent = `Correct: ${State.sessionStats.correct}`;
@@ -473,19 +562,17 @@ function updateStatsBar() {
 // ----------------------------------------------------------------
 // RESULTS VIEW
 // ----------------------------------------------------------------
-const resultsTbody  = document.getElementById('results-tbody');
-const resultsSummary= document.getElementById('results-summary');
-const btnNewSession = document.getElementById('btn-new-session');
-const btnReviewAgain= document.getElementById('btn-review-again');
+const resultsTbody   = document.getElementById('results-tbody');
+const resultsSummary = document.getElementById('results-summary');
+const btnNewSession  = document.getElementById('btn-new-session');
+const btnReviewAgain = document.getElementById('btn-review-again');
 
 function endSession() {
-  // Build results table
+  log('Session complete — showing results');
   resultsTbody.innerHTML = '';
   State.cards.forEach(card => {
     const result  = card.sessionResult ?? 'wrong';
-    const nextStr = card.interval <= 1
-      ? 'Tomorrow'
-      : `In ${card.interval} day${card.interval > 1 ? 's' : ''}`;
+    const nextStr = card.interval <= 1 ? 'Tomorrow' : `In ${card.interval} days`;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${escHtml(card.french)}</td>
@@ -494,19 +581,15 @@ function endSession() {
       <td>${nextStr}</td>`;
     resultsTbody.appendChild(tr);
   });
-
-  // Summary stats
   const { correct, partial, wrong } = State.sessionStats;
   resultsSummary.innerHTML = `
     <div class="result-stat green"><div class="number">${correct}</div><div class="label">Correct</div></div>
     <div class="result-stat amber"><div class="number">${partial}</div><div class="label">Close</div></div>
     <div class="result-stat red"><div class="number">${wrong}</div><div class="label">Wrong</div></div>`;
-
   showView('results');
 }
 
 btnNewSession.addEventListener('click', () => {
-  // Reset upload view for a new image
   imagePreview.classList.add('hidden');
   dropLabel.classList.remove('hidden');
   btnExtract.classList.add('hidden');
@@ -515,13 +598,14 @@ btnNewSession.addEventListener('click', () => {
   fileInput.value = '';
   State.imageDataURL = '';
   State.vocab = [];
+  debugLog.innerHTML = '';
+  debugPanel.classList.add('hidden');
   showView('upload');
 });
 
 btnReviewAgain.addEventListener('click', () => {
-  // Reset session results on cards, keep SM-2 data, restart quiz
   State.cards.forEach(c => { c.sessionResult = null; c.lastQuality = null; });
-  State.queue = shuffle(State.cards.map((_, i) => i));
+  State.queue    = shuffle(State.cards.map((_, i) => i));
   State.queuePos = 0;
   State.sessionStats = { correct: 0, partial: 0, wrong: 0 };
   updateStatsBar();
@@ -547,21 +631,15 @@ function escHtml(str) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function capitalize(s) {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
+function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
 // ----------------------------------------------------------------
 // INIT
 // ----------------------------------------------------------------
 function init() {
   loadSettings();
-  if (!State.apiKey) {
-    // First launch: show settings first
-    showView('settings');
-  } else {
-    showView('upload');
-  }
+  log(`App initialized. API key in storage: ${State.apiKey ? 'yes' : 'no'}`);
+  showView(State.apiKey ? 'upload' : 'settings');
 }
 
 init();
