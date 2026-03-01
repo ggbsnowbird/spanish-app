@@ -30,9 +30,9 @@
   <section id="view-settings" class="view hidden">
     <div class="card">
       <h2>Settings</h2>
-      <label for="api-key-input">OpenAI API Key</label>
-      <input type="password" id="api-key-input" placeholder="sk-..." autocomplete="off" />
-      <p class="hint">Your key is stored only in your browser (localStorage) and never sent anywhere except directly to OpenAI.</p>
+      <label for="api-key-input">Anthropic API Key</label>
+      <input type="password" id="api-key-input" placeholder="sk-ant-..." autocomplete="off" />
+      <p class="hint">Your key is stored only in your browser (localStorage) and sent directly to api.anthropic.com. Get yours at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>.</p>
       <div id="key-status" class="status-msg hidden"></div>
       <div class="settings-actions">
         <button id="btn-validate-key" class="btn-secondary">Validate key</button>
@@ -46,7 +46,7 @@
   <section id="view-upload" class="view">
     <div class="card upload-card">
       <h2>Upload your lesson image</h2>
-      <p class="hint">Upload a photo or scan of your Spanish lesson vocabulary list. OpenAI Vision will extract the French/Spanish word pairs automatically.</p>
+      <p class="hint">Upload a photo or scan of your Spanish lesson vocabulary list. Claude Vision will extract the French/Spanish word pairs automatically.</p>
       <div id="drop-zone">
         <input type="file" id="file-input" accept="image/*" hidden />
         <label for="file-input" id="drop-label">

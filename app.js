@@ -152,89 +152,31 @@ function evaluate(input, expected) {
 }
 
 // ----------------------------------------------------------------
-// OPENAI HELPERS
+// ANTHROPIC (CLAUDE) API HELPERS
 // ----------------------------------------------------------------
-const OPENAI_TIMEOUT_MS = 30000;  // 30 s
+const API_TIMEOUT_MS = 30000;  // 30 s
+const ANTHROPIC_BASE = 'https://api.anthropic.com';
+const ANTHROPIC_VERSION = '2023-06-01';
 
-async function checkConnectivity() {
-  log('Testing connectivity to api.openai.com…');
-
-  // Step 1: GET without auth (no preflight)
-  try {
-    const res = await fetch('https://api.openai.com/v1/models', {
-      method: 'GET',
-      signal: AbortSignal.timeout(8000),
-    });
-    log(`GET (no auth) check: HTTP ${res.status} ✓`, 'success');
-  } catch (err) {
-    log(`GET check FAILED: ${err.name} — ${err.message}`, 'error');
-    return false;
-  }
-
-  // Step 2: OPTIONS preflight simulation — does the network block preflights?
-  log('Testing OPTIONS preflight to api.openai.com…');
-  try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'OPTIONS',
-      signal: AbortSignal.timeout(8000),
-    });
-    log(`OPTIONS check: HTTP ${res.status} ✓`, 'success');
-  } catch (err) {
-    log(`OPTIONS/preflight FAILED: ${err.name} — ${err.message}`, 'error');
-    log('Your network (router/ISP/firewall) is blocking CORS preflight requests to api.openai.com', 'warn');
-    return false;
-  }
-
-  // Step 3: POST with Authorization header (triggers preflight)
-  log('Testing POST with Authorization header…');
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', 'https://api.openai.com/v1/chat/completions', true);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.setRequestHeader('Authorization', `Bearer INVALID_KEY_TEST`);
-    xhr.timeout = 10000;
-    xhr.onload = () => {
-      log(`POST+Auth check: HTTP ${xhr.status} ✓ (network allows authorized POST)`, 'success');
-      resolve(true);
-    };
-    xhr.onerror = () => {
-      log(`POST+Auth check FAILED — network blocks authenticated POST to api.openai.com`, 'error');
-      log('Check: 1) Chrome extensions (uBlock, AdGuard, etc) 2) Corporate/school network firewall 3) DNS filtering (NextDNS, Pi-hole)', 'warn');
-      resolve(false);
-    };
-    xhr.ontimeout = () => {
-      log('POST+Auth check timed out', 'warn');
-      resolve(false);
-    };
-    xhr.send(JSON.stringify({ model: 'gpt-4o-mini', max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] }));
-  });
-}
-
-// XHR-based fetch — explicit stream:false to avoid chunked CORS issues
-function openAIFetch(endpoint, body, apiKey) {
-  // Always disable streaming — chunked responses cause status=0 CORS errors in Chrome
-  body = { ...body, stream: false };
-
+function anthropicFetch(endpoint, body, apiKey) {
   const bodyStr    = JSON.stringify(body);
   const bodySizeKB = Math.round(bodyStr.length / 1024);
-  log(`POST ${endpoint} (payload: ${bodySizeKB} KB, stream: false) via XHR…`);
+  log(`POST ${endpoint} (payload: ${bodySizeKB} KB)…`);
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `https://api.openai.com/v1${endpoint}`, true);
+    xhr.open('POST', `${ANTHROPIC_BASE}${endpoint}`, true);
     xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
-    xhr.timeout = OPENAI_TIMEOUT_MS;
-
-    xhr.onreadystatechange = () => {
-      log(`XHR readyState=${xhr.readyState} status=${xhr.status}`);
-    };
+    xhr.setRequestHeader('x-api-key', apiKey);
+    xhr.setRequestHeader('anthropic-version', ANTHROPIC_VERSION);
+    xhr.setRequestHeader('anthropic-dangerous-direct-browser-access', 'true');
+    xhr.timeout = API_TIMEOUT_MS;
 
     xhr.onload = () => {
-      log(`Response received: HTTP ${xhr.status}, body length: ${xhr.responseText.length} chars`);
+      log(`Response: HTTP ${xhr.status} (${xhr.responseText.length} chars)`);
       let data = {};
       try { data = JSON.parse(xhr.responseText); } catch (e) {
-        log(`JSON parse error: ${e.message} — raw: ${xhr.responseText.substring(0, 100)}`, 'error');
+        log(`JSON parse error: ${e.message} — raw: ${xhr.responseText.substring(0, 200)}`, 'error');
       }
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(data);
@@ -245,20 +187,18 @@ function openAIFetch(endpoint, body, apiKey) {
     };
 
     xhr.onerror = () => {
-      log(`XHR onerror fired: readyState=${xhr.readyState}, status=${xhr.status}`, 'error');
-      log(`Response headers: ${xhr.getAllResponseHeaders() || '(none)'}`, 'warn');
-      reject(new Error(`Network error (status=${xhr.status}): browser blocked the response. This is a CORS issue — try opening the browser console Network tab for details.`));
+      log(`XHR error: readyState=${xhr.readyState}, status=${xhr.status}`, 'error');
+      reject(new Error('Network error reaching api.anthropic.com. Check your connection.'));
     };
 
     xhr.ontimeout = () => {
-      log(`XHR timed out after ${OPENAI_TIMEOUT_MS / 1000}s`, 'error');
-      reject(new Error(`Request timed out after ${OPENAI_TIMEOUT_MS / 1000} seconds.`));
+      log(`Request timed out after ${API_TIMEOUT_MS / 1000}s`, 'error');
+      reject(new Error(`Request timed out after ${API_TIMEOUT_MS / 1000} seconds.`));
     };
 
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const pct = Math.round(e.loaded / e.total * 100);
-        if (pct === 100) log(`Upload complete (${Math.round(e.total / 1024)} KB sent) — waiting for OpenAI response…`);
+      if (e.lengthComputable && e.loaded === e.total) {
+        log(`Upload complete (${Math.round(e.total / 1024)} KB) — waiting for Claude…`);
       }
     };
 
@@ -268,9 +208,9 @@ function openAIFetch(endpoint, body, apiKey) {
 
 // Validate API key with a tiny cheap call
 async function validateApiKey(apiKey) {
-  log('Validating API key…');
-  const data = await openAIFetch('/chat/completions', {
-    model: 'gpt-4o-mini',
+  log('Validating Anthropic API key…');
+  const data = await anthropicFetch('/v1/messages', {
+    model: 'claude-haiku-3-5',
     max_tokens: 1,
     messages: [{ role: 'user', content: 'Hi' }],
   }, apiKey);
@@ -278,19 +218,27 @@ async function validateApiKey(apiKey) {
   return true;
 }
 
-// Extract vocab from image
+// Extract vocab from image using Claude Vision
 async function extractVocabFromImage(imageDataURL, apiKey) {
   const base64   = imageDataURL.split(',')[1];
-  const mimeType = imageDataURL.match(/data:(image\/\w+);/)?.[1] ?? 'image/jpeg';
+  const mimeType = imageDataURL.match(/data:(image\/[\w+]+);/)?.[1] ?? 'image/jpeg';
   const sizeKB   = Math.round(base64.length * 0.75 / 1024);
-  log(`Sending image to OpenAI Vision (${sizeKB} KB, detail: low)…`);
+  log(`Sending image to Claude Vision (${sizeKB} KB)…`);
 
-  const data = await openAIFetch('/chat/completions', {
-    model: 'gpt-4o',
+  const data = await anthropicFetch('/v1/messages', {
+    model: 'claude-haiku-3-5',
     max_tokens: 1500,
     messages: [{
       role: 'user',
       content: [
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: mimeType,
+            data: base64,
+          },
+        },
         {
           type: 'text',
           text: `This image is a French–Spanish vocabulary lesson.
@@ -300,19 +248,15 @@ Format: [{"french": "...", "spanish": "..."}, ...]
 If the same French word has multiple Spanish translations, create one entry per translation.
 If you cannot find any pairs, return an empty array [].`,
         },
-        {
-          type: 'image_url',
-          image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'low' },
-        },
       ],
     }],
   }, apiKey);
 
-  const text    = data.choices?.[0]?.message?.content ?? '';
+  const text    = data.content?.[0]?.text ?? '';
   log(`Raw response: ${text.substring(0, 120)}…`);
   const cleaned = text.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
   const pairs   = JSON.parse(cleaned);
-  if (!Array.isArray(pairs)) throw new Error('Unexpected response format from OpenAI.');
+  if (!Array.isArray(pairs)) throw new Error('Unexpected response format from Claude.');
   const filtered = pairs.filter(p => p.french && p.spanish);
   log(`Extracted ${filtered.length} word pairs ✓`, 'success');
   return filtered;
@@ -365,14 +309,8 @@ btnValidateKey.addEventListener('click', async () => {
   const key = apiKeyInput.value.trim();
   if (!key) { setKeyStatus('Enter a key first.', 'error'); return; }
   btnValidateKey.disabled = true;
-  setKeyStatus('Checking connectivity…', 'loading');
+  setKeyStatus('Validating key…', 'loading');
   try {
-    const reachable = await checkConnectivity();
-    if (!reachable) {
-      setKeyStatus('Cannot reach api.openai.com — check your network or browser extensions.', 'error');
-      return;
-    }
-    setKeyStatus('Validating key…', 'loading');
     await validateApiKey(key);
     setKeyStatus('Key is valid ✓', 'success');
   } catch (err) {
@@ -466,15 +404,8 @@ btnExtract.addEventListener('click', async () => {
     State.imageDataURL = resized;
     imagePreview.src   = resized;  // show resized version
 
-    // Step 2 — connectivity check
-    setStatus('Step 2/3 — Checking connectivity to OpenAI…', 'loading');
-    const reachable = await checkConnectivity();
-    if (!reachable) {
-      throw new Error('Cannot reach api.openai.com. Check your network, VPN, or browser extensions (e.g. ad blockers, privacy shields).');
-    }
-
-    // Step 3 — call OpenAI Vision
-    setStatus('Step 3/3 — Sending to OpenAI Vision (up to 30s)…', 'loading');
+    // Step 2 — call Claude Vision
+    setStatus('Step 2/2 — Sending to Claude Vision (up to 30s)…', 'loading');
     const pairs = await extractVocabFromImage(State.imageDataURL, State.apiKey);
 
     if (pairs.length === 0) {
